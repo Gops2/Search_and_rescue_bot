@@ -1,0 +1,231 @@
+' -----[ Title ]-----------------------------------------------------------
+' Ir Remote Application - IrRemoteButtonDisplay.bs2
+' Process incoming SONY remote signals and display the corresponding button
+' in the Debug Terminal.
+' {$STAMP BS2} ' BS2, 2sx, 2e, 2p, or 2pe
+' {$PBASIC 2.5}
+' -----[ Revision History ]------------------------------------------------
+' V1.0 - Supports most SONY TV and VCR control buttons.
+' Supports BASIC Stamp 2, 2SX, 2e, 2p, and 2pe modules.
+' -----[ I/O Definitions ]-------------------------------------------------
+' SONY TV IR remote declaration - input receives from IR detector
+IrDet PIN 9 ' I/O pin to IR detector output
+' -----[ Constants ]-------------------------------------------------------
+' Pulse duration constants for SONY remote.
+#SELECT $stamp
+ #CASE BS2, BS2E, BS2PE ' PULSE durations
+ ThresholdStart CON 1000 ' Message rest vs. data rest
+ ThresholdEdge CON 300 ' Binary 1 vs. 0 for RCTIME
+ OverStart CON 1125 ' Start pulse max
+ UnderStart CON 675 ' Start pulse min
+ #CASE BS2P, BS2SX
+ ThresholdStart CON 2400 ' Binary 1 vs. start pulse
+ ThresholdPulse CON 500 * 5 / 2 ' Binary 1 vs. 0 for PULSIN
+ #CASE #ELSE
+ #ERROR This BASIC Stamp NOT supported.
+#ENDSELECT
+' SONY TV IR remote constants for non-keypad buttons
+Enter CON 11
+ChUp CON 16
+ChDn CON 17
+VolUp CON 18
+VolDn CON 19
+Mute CON 20
+Power CON 21
+TvLast CON 59 ' AKA PREV CH
+' SONY VCR IR remote constants
+' IMPORTANT: Before you can make use of these constants, you must
+' also follow the universal remote instructions to set your remote
+' to control a SONY VCR. Not all remote codes work, so you may have to
+' test several.
+VcrStop CON 24
+VcrPause CON 25
+VcrPlay CON 26
+VcrRewind CON 27
+VcrFastForward CON 28
+VcrRecord CON 29
+' Function keys
+FnSleep CON 54
+FnMenu CON 96
+CmConstant CON 2260 'constant needed to calculate the distance using input from ultrasonic sensor
+' -----[ Variables ]-------------------------------------------------------
+' SONY TV IR remote variables
+irPulse VAR Word ' Stores pulse widths
+remoteCode VAR Byte ' Stores remote code
+cmDistance VAR Word  'calculating the distance in cm using ultrasonic sensor
+time VAR Word    'used when calculating cmDistance
+' -----[ Initialization ]--------------------------------------------------
+'DEBUG "Press/release remote buttons..."
+' -----[ Main Routine ]----------------------------------------------------
+'MY CODE
+SEROUT 14, 84, [22,12] 'Turn on LCD and clear screen
+PAUSE 5
+main:
+ DO
+  PULSOUT 15, 5  'for ultrasonic sensor
+  PULSIN 15, 1, time  'for ultrasonic sensor
+  cmDistance = CmConstant ** time   'calculating distance of the object
+  DEBUG CLS, DEC3 cmDistance, " cm", CR   'print distance in debug terminal. would only be useful when using the robot while it is connected to laptop
+  SEROUT 14, 84, [12,17,DEC3 cmDistance, " cm"] 'display the distance in LCD screen
+
+  IF (IN10 = 1) THEN   'when kill switch pressed, end the code'
+   GOTO end_code
+  ENDIF
+
+  IF cmDistance < 10 THEN  'when object is closer than 10cm
+   SEROUT 14, 84, [12] 'clear LCD screen
+   PAUSE 5
+   SEROUT 14, 84, ["Warning!", 17,13,DEC3 cmDistance, " cm"]  'Display Warning on LCD on first line. Second line display the distance
+   DEBUG CLS, "Warning!", CR, DEC3 cmDistance, " cm"
+   HIGH 0   'turn on LED
+   FREQOUT 3, 500, 1500  'make a beeping sound
+   FREQOUT 3, 500, 1500
+   FREQOUT 3, 500, 1500
+   FREQOUT 3, 500, 1500
+   FREQOUT 3, 500, 1500
+   GOTO warning
+  ELSE
+   LOW 0 'when distance>=10, then turn off LED
+  ENDIF
+'END OF MY CODE
+'more code written below
+
+ GOSUB Get_Ir_Remote_Code  'getting input from remote.
+ SELECT remoteCode
+ CASE 2, ChUp ' Forward
+ PULSOUT 13, 850
+ PULSOUT 12, 650
+ CASE 4, VolDn ' Rotate Left
+ PULSOUT 13, 650
+ PULSOUT 12, 650
+ CASE 6, VolUp ' Rotate Right
+ PULSOUT 13, 850
+ PULSOUT 12, 850
+ CASE 8, ChDn ' Backward
+ PULSOUT 13, 650
+ PULSOUT 12, 850
+ CASE 1 ' Pivot Forward-left: only right motor moves forward
+ PULSOUT 13, 750
+ PULSOUT 12, 650
+ CASE 3 ' Pivot Forward-right: only left motor moves forward
+ PULSOUT 13, 850
+ PULSOUT 12, 750
+ CASE 7 ' Pivot back-left: only right motor moves backward
+ PULSOUT 13, 750
+ PULSOUT 12, 850
+ CASE 9 ' Pivot back-right: only left motor moves backward
+ PULSOUT 13, 650
+ PULSOUT 12, 750
+ CASE ELSE ' Hold position
+ PULSOUT 13, 750
+ PULSOUT 12, 750
+ ENDSELECT
+LOOP
+
+
+
+' -----[ Subroutine - Get_Ir_Remote_Code ]---------------------------------
+' SONY TV IR remote subroutine loads the remote code into the
+' remoteCode variable.
+'This code gets the input from the remote and store it in remoteCode variable which is used to control the motors shown right above
+Get_Ir_Remote_Code:
+ remoteCode = 0
+ #SELECT $stamp
+ #CASE BS2, BS2E, BS2PE
+ ' Wait for resting state between messages to end.
+ DO
+ RCTIME IrDet, 1, irPulse
+ LOOP UNTIL irPulse > ThresholdStart
+ ' Measure start pulse. If out of range, then retry at
+ ' Get_Ir_Remote_Code label.
+ RCTIME 9, 0, irPulse
+ IF irPulse > OverStart OR irPulse < UnderStart THEN Get_Ir_Remote_Code
+ ' Get data bit pulses.
+ RCTIME IrDet, 0, irPulse
+ IF irPulse > ThresholdEdge THEN remoteCode.BIT0 = 1
+ RCTIME IrDet, 0, irPulse
+ IF irPulse > ThresholdEdge THEN remoteCode.BIT1 = 1
+ RCTIME IrDet, 0, irPulse
+ IF irPulse > ThresholdEdge THEN remoteCode.BIT2 = 1
+ RCTIME IrDet, 0, irPulse
+ IF irPulse > ThresholdEdge THEN remoteCode.BIT3 = 1
+ RCTIME IrDet, 0, irPulse
+ IF irPulse > ThresholdEdge THEN remoteCode.BIT4 = 1
+ RCTIME IrDet, 0, irPulse
+ IF irPulse > ThresholdEdge THEN remoteCode.BIT5 = 1
+ RCTIME IrDet, 0, irPulse
+ IF irPulse > ThresholdEdge THEN remoteCode.BIT6 = 1
+ #CASE BS2SX, BS2P
+ DO ' Wait for start pulse.
+ PULSIN IrDet, 0, irPulse
+ LOOP UNTIL irPulse > ThresholdStart
+ PULSIN IrDet, 0, irPulse ' Get data pulses.
+ IF irPulse > ThresholdPulse THEN remoteCode.BIT0 = 1
+ PULSIN IrDet, 0, irPulse
+ IF irPulse > ThresholdPulse THEN remoteCode.BIT1 = 1
+ PULSIN IrDet, 0, irPulse
+ IF irPulse > ThresholdPulse THEN remoteCode.BIT2 = 1
+ PULSIN IrDet, 0, irPulse
+ IF irPulse > ThresholdPulse THEN remoteCode.BIT3 = 1
+ PULSIN IrDet, 0, irPulse
+ IF irPulse > ThresholdPulse THEN remoteCode.BIT4 = 1
+ PULSIN IrDet, 0, irPulse
+ IF irPulse > ThresholdPulse THEN remoteCode.BIT5 = 1
+ PULSIN IrDet, 0, irPulse
+ IF irPulse > ThresholdPulse THEN remoteCode.BIT6 = 1
+ #CASE #ELSE
+ #ERROR "BASIC Stamp version not supported by this program."
+ #ENDSELECT
+ ' Map digit keys to actual values.
+ IF (remoteCode < 10) THEN remoteCode = remoteCode + 1
+ IF (remoteCode = 10) THEN remoteCode = 0
+ RETURN
+
+'MY CODE
+warning:
+'move back a little bit before rotating to the left
+ PULSOUT 13, 650
+ PULSOUT 12, 850
+ PAUSE 200
+ PULSOUT 13, 650
+ PULSOUT 12, 850
+ PAUSE 200
+ PULSOUT 13, 650
+ PULSOUT 12, 850
+ PAUSE 200
+ PULSOUT 13, 650
+ PULSOUT 12, 850
+ PAUSE 200
+ PULSOUT 13, 650
+ PULSOUT 12, 850
+ PAUSE 200
+ PULSOUT 13, 650
+ PULSOUT 12, 850
+ PAUSE 200
+
+ DO WHILE (cmDistance<=17)   'until the distance of the object is greater than 17, the robot rotates to the left. Made the threshold to so theres more room for robot to move
+  PULSOUT 15, 5
+  PULSIN 15, 1, time
+  cmDistance = CmConstant ** time 're-calculated the distance of the object
+  DEBUG CLS, DEC3 cmDistance, " cm", CR
+  PULSOUT 13, 650  'rotate left
+  PULSOUT 12, 650
+  PAUSE 200
+ LOOP
+ GOTO main 'after the distance of object is greater than 15, we go back to the main code
+
+end_code: 'This is only run when the kill switch is pressed
+ SEROUT 14, 84, [12,"Shut Down"]
+ DEBUG CLS,"The robot has been shut down"
+ FREQOUT 3, 500, 2000 'makes a different beep sound for ending the code
+ FREQOUT 3, 500, 1500
+ FREQOUT 3, 500, 1000
+ FREQOUT 3, 500, 500
+ FREQOUT 3, 500, 100
+ FREQOUT 3, 500, 50
+ PAUSE 7000
+ SEROUT 14, 84, [21,18]
+
+
+
+ 'END OF MY CODE
